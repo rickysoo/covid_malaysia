@@ -1,0 +1,244 @@
+---
+title: 'Exploring COVID-19 Death Cases in Malaysia'
+author: "Ricky Soo"
+date: "16th January 2021"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## The Key Idea
+
+As on 15th January 2021, 586 people have died in the COVID-19 pandemic in Malaysia. Although this is less than 0.4% of the total of 151,066 infection cases, these still represent 586 precious lives lost, hundreds of families grieved, tens of millions of ringgit spent on treating the patients and sending them off.
+
+Many data scientists might study more on the confirmed infection cases. But if we can explore more on the death cases, perhaps we can discover some patterns to understand the situation better, and even help reduce the number of deaths over time.
+
+In this project, the main question is “What can we learn from the COVID-19 death cases in Malaysia?” 4 charts will be used for this purpose – Heat map, correlation plot, radar chart and choropleth map.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggExtra)
+library(lubridate)
+library(plotly)
+library(corrplot)
+library(fmsb)
+library(sf)
+library(leaflet)
+library(readxl)
+```
+
+## Heat Map
+Data source - https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv
+
+During the first half of year 2000, we thought our situation was bad enough. Little did we know that the nightmare came in the third wave starting from October 2020 when more people died, and the situation is still getting worse as of today.
+
+In fact, nearly 20% of all deaths occurred in the first half of January 2021 alone. If we don’t take any effective measures urgently, the year 2021 is not looking good ahead. More red boxes are likely to show up on the right hand side of the chart!
+
+The heat map shows the number of death cases on each day since the first case on 17th March 2020. Move your mouse over the chart to read the number of death cases each day.
+
+```{r}
+weekdays <- c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+URL <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv'
+
+df_heatmap <- read.csv(URL) %>%
+    rename(Country = Country.Region) %>%
+    filter(Country == 'Malaysia') %>%
+    select(-Province.State, -Country, -Lat, -Long) %>%
+    t() %>%
+    data.frame()
+
+colnames(df_heatmap) <- c('CumDeath')
+
+df_heatmap <- df_heatmap %>%
+    mutate(
+        Death = c(0, diff(df_heatmap$CumDeath)),
+        Date = as.Date(rownames(df_heatmap), 'X%m.%d.%y'),
+        Year = year(Date),
+        Month = month(Date, label = TRUE),
+        Day = day(Date),
+        Weekday = wday(Date, label = TRUE, abbr = FALSE)
+    ) %>%
+    mutate(
+        Weekday = factor(Weekday, levels = weekdays)
+    ) %>%
+    filter(
+        CumDeath != 0
+    )
+
+df_heatmap <- df_heatmap[, c('Date', 'Death', 'Year', 'Month', 'Day', 'Weekday')]
+
+fig <- ggplot(df_heatmap, aes(Month, Day, fill = Death)) +
+    scale_fill_gradient(low = 'blue', high = 'red') +
+    geom_tile(color = 'white', size = 0.1) +
+    facet_grid(cols = vars(Year)) +
+    scale_y_continuous(trans = 'reverse', breaks = unique(df_heatmap$Day)) +
+    theme_minimal(base_size = 8) +
+    labs(title = 'Daily Death Cases in Malaysia', x =  'Month', y = 'Day') +
+    theme(legend.position = 'right') +
+    theme(plot.title = element_text(size = 14)) +
+    theme(axis.text.y = element_text(size = 6)) +
+    theme(strip.background = element_rect(colour = 'white')) +
+    theme(plot.title = element_text(hjust = 0)) +
+    theme(axis.ticks = element_blank()) +
+    theme(axis.text = element_text(size = 7)) +
+    theme(legend.title = element_text(size = 8)) +
+    theme(legend.text = element_text(size = 6)) +
+    removeGrid()
+
+fig <- ggplotly(fig) %>%
+    layout(
+        margin = 50
+    )
+fig
+
+orca(fig, 'heatmap.png')
+```
+
+
+## Correlation Plot
+Data source - https://www.kaggle.com/yeanzc/malaysia-covid19-dataset
+
+How are the death cases related to other numbers that we have in the data? If we can detect any high correlation, then we can understand what other phenomena might tend to happen together with deaths.
+
+While the number of death cases are positively correlated with the number of infection cases, the number of patients in ICU, and the number of patients being intubated, the association is just moderate at between 0.64 to 0.72.
+
+Perhaps the medical interventions have been successful in reducing the number of deaths, hence the less linear association between the number of deaths with other variables.
+
+```{r}
+df_corr <- read.csv('malaysia_covid_data.csv') %>%
+    select(
+        Death,
+        Confirmed = New.case,
+        ICU,
+        Intubated = Intuated
+    )
+
+corrplot(
+    cor(df_corr), 
+    method = 'circle', 
+    type = 'upper', 
+    order = 'hclust', 
+    addCoef.col = 'black',
+    title = 'Correlation of Death Cases with Other Variables',
+    mar = c(0, 0, 1, 0)
+)
+```
+
+## Radar Chart
+Data source - https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv
+
+Why do many deaths happen in the middle of a week and on Sundays, but less on Monday? Does this happen totally by chance? Or does it mean the start of a new week somehow give hope to patients to go on in life? If so, what kind of psychological intervention we can make to reduce deaths in overall?
+
+This is totally a speculation. More data is needed to investigate if there is any reason behind this pattern. But it is good to be curious and ask such questions, in order to help better the current situation.
+
+```{r}
+df_radar <- df_heatmap %>%
+    group_by(Weekday) %>%
+    summarise(Deaths = sum(Death)) %>%
+    select(Deaths)
+
+max_deaths <- max(df_radar$Deaths)
+
+df_radar <- df_radar %>%
+    t() %>%
+    data.frame()
+
+colnames(df_radar) <- weekdays
+df_radar <- rbind(rep(max_deaths, 7) , rep(0, 7), df_radar)
+max_label <- round(max_deaths, -2)
+
+radarchart(
+    df_radar,
+    axistype = 1,
+    seg = 5,
+    pcol= rgb(0.5, 0, 0, 0.9),
+    pfcol = rgb(0.5, 0, 0, 0.4),
+    plwd = 4,
+    cglcol = 'blue',
+    cglty = 3,
+    axislabcol = 'black',
+    cglwd = 0.8,
+    caxislabels = seq(0, max_label, max_label / 5),
+    vlcex = 0.8,
+    title = 'Death Cases over a Week',
+    centerzero = TRUE
+)
+```
+
+## Choropleth Map
+Data source - https://data.world/erhanazrai/httpsdocsgooglecomspreadsheetsd15a43eb68lt7ggk9vavy
+
+This is a time travel back to June 2000. That’s when KL (26), Johor (21), Sarawak (17) and Selangor (16) topped the list. The situation changed later as Sabah turned number 1 and then almost the whole country suffered.
+
+It shows two things. Firstly, the hotspots are ever-changing. COVID-19 can happen anywhere regardless of geography. Secondly, areas with denser population such as KL and Selangor remain on the top even now, showing that the pandemic might have some association with the population density.
+
+Move your mouse over the map to read the number of death cases in each state. Interactive chart is available at https://rpubs.com/rickysoo/covid_malaysia
+
+```{r}
+df_states <- read_excel('Covid19-KKM.xlsx', sheet = 'Death_cases')
+
+df_states[78, 'State'] <- 'Sabah'
+df_states[110, 'State'] <- 'Negeri Sembilan'
+df_states[114, 'State'] <- 'Pahang'
+df_states <- subset(df_states, !is.na(df_states$State))
+df_states[df_states$State == 'WP KL', 'State'] <- 'Kuala Lumpur'
+df_states[df_states$State == 'Pulau Pinang', 'State'] <- 'Penang'
+df_states[df_states$State == 'Melaka', 'State'] <- 'Malacca'
+
+df_states <- df_states %>%
+    group_by(State) %>%
+    summarise(Death = n()) %>%
+    arrange(State)
+
+malaysia_shapefiles <- read_sf(dsn = "data/malaysia_singapore_brunei_administrative_malaysia_state_province_boundary.shp")
+
+map_data <- malaysia_shapefiles %>%
+    right_join(df_states, by = c('name' = 'State'))
+
+Deaths <- map_data$Death
+qpal <- colorNumeric(c('#ffeda0', 'red4'), Deaths)
+
+map_data %>%
+    leaflet(width = '100%') %>%
+    addTiles() %>%
+    setView(lng = 108, lat = 4, zoom = 6) %>%
+    addPolygons(
+        stroke = TRUE,
+        color = 'black',
+        weight = 1,
+        opacity = 1,
+        smoothFactor = 1,
+        fillOpacity = 0.5,
+        fillColor = qpal(Deaths),
+        label = ~paste0(name, ' - ', Deaths)
+    ) %>%
+    addLegend(
+        pal = qpal, 
+        values = Deaths, 
+        opacity = 0.8,
+        title = 'Death Cases up to 10th June 2020',
+        position = 'bottomright',
+        na.label = 'NA'
+    )
+```
+
+## Data Sources & References
+
+- Data for heat map and radar chart: Johns Hopkins University at https://github.com/CSSEGISandData/COVID-19
+
+- Data for correlation plot: Malaysia Covid-19 Dataset at https://www.kaggle.com/yeanzc/malaysia-covid19-dataset
+
+- Data for choropleth map: Covid-19 Malaysia dataset at https://data.world/erhanazrai/httpsdocsgooglecomspreadsheetsd15a43eb68lt7ggk9vavy
+
+- Cost of dying: Loanstreet at https://loanstreet.com.my/learning-centre/funeral-cost
+
+All data is assumed to be correct indicating the number of death cases and other variables as of the date indicated by each dataset.
