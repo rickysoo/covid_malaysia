@@ -257,6 +257,8 @@ server <- function(input, output, session) {
             layout(
                 margin = 20,
                 title = paste0('Daily ', input$category, ' Cases in ', input$country),
+                xaxis = list(fixedrange = TRUE),
+                yaxis = list(fixedrange = TRUE),
                 showlegend = FALSE
             )
         fig
@@ -301,6 +303,8 @@ server <- function(input, output, session) {
         
         fig <- ggplotly(fig) %>%
             layout(
+                xaxis = list(fixedrange = TRUE),
+                yaxis = list(fixedrange = TRUE),
                 margin = 20
             )
         fig
